@@ -12,7 +12,7 @@ use vh1160_core::{
 
 #[derive(Parser)]
 #[command(
-    name = "vh1160",
+    name = "vh1160-cli",
     version,
     about = "Control a Vector VH1160 / VH1150 ECU test box over USB"
 )]
@@ -281,7 +281,7 @@ fn connect(cli: &Cli) -> Result<Vh1160, String> {
         None => {
             let found = find_devices().map_err(|e| e.to_string())?;
             match found.as_slice() {
-                [] => return Err("no VH1160 found; pass --port or try `vh1160 ports`".into()),
+                [] => return Err("no VH1160 found; pass --port or try `vh1160-cli ports`".into()),
                 [(port, _)] => port.clone(),
                 many => {
                     let names: Vec<_> = many.iter().map(|(p, _)| p.as_str()).collect();

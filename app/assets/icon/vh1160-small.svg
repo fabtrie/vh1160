@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <!-- VH1160 Control app icon for 24 px and below: same drawing with thicker strokes. -->
+  <rect width="128" height="128" rx="28" fill="#0c2a44"/>
+  <rect x="1.5" y="1.5" width="125" height="125" rx="26.5" fill="none" stroke="#fff" stroke-opacity=".16" stroke-width="3"/>
+  <g stroke="#fac775" stroke-width="15" stroke-linecap="round" fill="none">
+    <path d="M14 84 H33"/>
+    <path d="M44 84 L90 48"/>
+    <path d="M97 84 H114"/>
+  </g>
+  <circle cx="44" cy="84" r="12" fill="#fac775"/>
+  <circle cx="86" cy="84" r="10" fill="none" stroke="#fac775" stroke-width="8"/>
+</svg>

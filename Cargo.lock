@@ -6699,6 +6699,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 name = "vh1160-app"
 version = "0.1.0"
 dependencies = [
+ "embed-resource",
  "futures",
  "gpui-component",
  "gpui-kit-assets",
@@ -6714,6 +6715,7 @@ name = "vh1160-cli"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "embed-resource",
  "serde_json",
  "vh1160-core",
 ]

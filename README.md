@@ -2,11 +2,11 @@
 
 Rust tools for the Vector VH1160 / VH1150 ECU test box over USB. The box appears as an FTDI COM port (230400 8N1) and speaks a small ASCII protocol: one command letter, optional digits, then CR.
 
-Vector's `VHDevDLL.dll` only works inside CANoe, so the protocol was read out of that DLL (CANoe 17, v2.9.0.0). The command table is in `crates/vh1160-core/src/protocol.rs`. **Nothing here has been checked against a real box yet**: try it first with the ECU disconnected and compare `vh1160 read` with a multimeter.
+Vector's `VHDevDLL.dll` only works inside CANoe, so the protocol was read out of that DLL (CANoe 17, v2.9.0.0). The command table is in `crates/vh1160-core/src/protocol.rs`. **Nothing here has been checked against a real box yet**: try it first with the ECU disconnected and compare `vh1160-cli read` with a multimeter.
 
 - `crates/vh1160-core`: protocol library and a built-in simulator
-- `crates/vh1160-cli`: the `vh1160` command-line tool
-- `app/`: GPUI desktop app (gpui-pre) with live voltage and current graphs
+- `crates/vh1160-cli`: the `vh1160-cli` command-line tool
+- `app/`: the `vh1160` GPUI desktop app (gpui-pre) with live voltage and current graphs
 
 ## CLI
 
@@ -37,11 +37,17 @@ The box cannot report its relay states, so the switches show what was last sent;
 cargo build --release -p vh1160-app -p vh1160-cli
 ```
 
-The output is `target/release/vh1160-app.exe` and `target/release/vh1160.exe`. A release build of the app compiles GPUI's shaders with `fxc.exe` from the Windows SDK; set `GPUI_FXC_PATH` if it is not found.
+The output is `target/release/vh1160.exe` (the app) and `target/release/vh1160-cli.exe` (the CLI). A release build of the app compiles GPUI's shaders with `fxc.exe` from the Windows SDK; set `GPUI_FXC_PATH` if it is not found.
 
 ## Assets
 
 `app/assets` holds Tabler icons as SVG (MIT, `app/assets/icons/LICENSE`) and Share Tech Mono as TTF (SIL OFL 1.1, `app/assets/fonts/OFL.txt`).
+
+The app icon is `app/assets/icon/vh1160.svg`, with `vh1160-small.svg` (thicker strokes) used for 24 px and below. Both exes embed `vh1160.ico` through their build.rs. After editing the SVGs, regenerate the .ico:
+
+```bash
+uv run tools/make_icon.py
+```
 
 ## Tests
 
