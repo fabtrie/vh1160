@@ -1,0 +1,21 @@
+[package]
+name = "vh1160-app"
+description = "Desktop UI for the Vector VH1160 / VH1150 ECU test box"
+version.workspace = true
+edition = "2024"
+license.workspace = true
+
+[[bin]]
+name = "vh1160-app"
+path = "src/main.rs"
+
+[dependencies]
+vh1160-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+futures = "0.3"
+# The same gpui-pre / gpui-component pair the Autobus app builds with.
+gpui = { package = "gpui-pre", version = "=0.3.12", default-features = false, features = ["windows-manifest"] }
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.12" }
+gpui-component = "=0.9.1"
+gpui-kit-assets = "=0.9.1"

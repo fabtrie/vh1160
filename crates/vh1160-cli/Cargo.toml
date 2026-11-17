@@ -1,0 +1,15 @@
+[package]
+name = "vh1160-cli"
+description = "Command-line control for the Vector VH1160 / VH1150 ECU test box"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "vh1160"
+path = "src/main.rs"
+
+[dependencies]
+vh1160-core.workspace = true
+clap = { version = "4", features = ["derive"] }
+serde_json.workspace = true

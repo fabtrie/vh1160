@@ -1,0 +1,11 @@
+[package]
+name = "vh1160-core"
+description = "Protocol library for the Vector VH1160 / VH1150 ECU test box"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serialport = "4"
+serde.workspace = true
+thiserror.workspace = true
