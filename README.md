@@ -2,7 +2,7 @@
 
 Rust tools for the Vector VH1160 / VH1150 ECU test box over USB. The box appears as an FTDI COM port (230400 8N1) and speaks a small ASCII protocol: one command letter, optional digits, then CR.
 
-Vector's `VHDevDLL.dll` only works inside CANoe, so the protocol was read out of that DLL (CANoe 17, v2.9.0.0). The command table is in `crates/vh1160-core/src/protocol.rs`. **Nothing here has been checked against a real box yet**: try it first with the ECU disconnected and compare `vh1160-cli read` with a multimeter.
+Vector's `VHDevDLL.dll` only works inside CANoe, so the protocol was read out of that DLL (CANoe 17, v2.9.0.0). The command table is in `crates/vh1160-core/src/protocol.rs`.
 
 - `crates/vh1160-core`: protocol library and a built-in simulator
 - `crates/vh1160-cli`: the `vh1160-cli` command-line tool
