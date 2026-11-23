@@ -8,6 +8,10 @@ Vector's `VHDevDLL.dll` only works inside CANoe, so the protocol was read out of
 - `crates/vh1160-cli`: the `vh1160-cli` command-line tool
 - `app/`: the `vh1160` GPUI desktop app (gpui-pre) with live voltage and current graphs
 
+![VH1160 Control in light mode, connected to the simulator, after KL15 was opened and the ECU went to sleep](docs/screenshot-light.png)
+
+![VH1160 Control in dark mode, connected to the simulator, with KL30 and KL15 on and the ECU drawing 240 mA](docs/screenshot-dark.png)
+
 ## CLI
 
 ```bash
