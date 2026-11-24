@@ -10,6 +10,7 @@ use gpui::{
 };
 use gpui_component::input::{InputEvent, InputState};
 use vh1160_core::protocol::Feature;
+use vh1160_core::remote::Request;
 use vh1160_core::{
     DeviceState, LinCabSupply, LinPeriodicFault, LineInterrupt, LineShort, Measurement, PortEntry,
     Terminal, Version,
@@ -350,8 +351,68 @@ impl VhApp {
                 self.error = Some(e);
                 self.busy = None;
             }
+            Event::Remote(req) => self.mirror_remote(req),
         }
         cx.notify();
+    }
+
+    /// Updates the switches after the CLI changed the box through the app; the
+    /// box cannot report them. Mirrors what the matching action here sets.
+    fn mirror_remote(&mut self, req: Request) {
+        match req {
+            Request::Relay(t, on) => {
+                let k = Terminal::ALL.iter().position(|&x| x == t).unwrap_or(0);
+                self.relays[k] = on;
+            }
+            Request::PowerOn(_) | Request::ResetEcu(_) => self.relays = [true; 3],
+            Request::PowerOff => {
+                self.relays[0] = false;
+                self.relays[1] = false;
+            }
+            Request::Safe => self.after_safe_state(),
+            Request::BusFaults(interrupt, h, l) => {
+                self.int_h = matches!(interrupt, LineInterrupt::CanH | LineInterrupt::Both);
+                self.int_l = matches!(interrupt, LineInterrupt::CanL | LineInterrupt::Both);
+                self.short_h = h;
+                self.short_l = l;
+                self.faults_active = interrupt != LineInterrupt::None
+                    || h != LineShort::None
+                    || l != LineShort::None;
+                if self.faults_active {
+                    self.periodic_active = false;
+                }
+            }
+            Request::PeriodicLinFault(mode, _) => {
+                self.periodic = mode;
+                self.periodic_active = mode != LinPeriodicFault::Off;
+                if self.periodic_active {
+                    self.faults_active = false;
+                }
+            }
+            Request::GroundOffset(v) => self.mirror_level(0, v > 0.0),
+            Request::TesterGroundOffset(v) => self.mirror_level(1, v > 0.0),
+            Request::LinRecessiveLimit(v) => self.mirror_level(2, v > 0.0),
+            Request::LinCabSupply(m) => self.cab = m,
+            Request::DigitalOutput(b) => self.dout = b,
+            Request::CurrentRange { auto } => self.range_auto = auto,
+            Request::CanCapacitors(b) => self.caps = b,
+            Request::CanLinesCrossed(b) => self.cross = b,
+            _ => {}
+        }
+    }
+
+    /// Like [`Self::toggle_level`]: the three level features are exclusive.
+    fn mirror_level(&mut self, which: usize, on: bool) {
+        if on {
+            self.gnd_on = false;
+            self.tester_on = false;
+            self.limit_on = false;
+        }
+        match which {
+            0 => self.gnd_on = on,
+            1 => self.tester_on = on,
+            _ => self.limit_on = on,
+        }
     }
 
     fn update_axes(&mut self) {

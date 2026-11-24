@@ -5,9 +5,10 @@ use std::time::{Duration, Instant};
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use vh1160_core::protocol::Feature;
+use vh1160_core::remote::{Client, Peer, Reply, Request};
 use vh1160_core::{
-    find_devices, list_ports, LinCabSupply, LinPeriodicFault, LineInterrupt, LineShort, Terminal,
-    Vh1160,
+    find_devices, list_ports, LinCabSupply, LinPeriodicFault, LineInterrupt, LineShort,
+    Measurement, Terminal, Vh1160,
 };
 
 #[derive(Parser)]
@@ -21,9 +22,14 @@ struct Cli {
     #[arg(short, long, global = true, conflicts_with = "sim")]
     port: Option<String>,
 
-    /// Use the built-in simulator instead of real hardware.
+    /// Use the built-in simulator instead of real hardware (the app's, if it runs one).
     #[arg(long, global = true)]
     sim: bool,
+
+    /// Open the port even if the vh1160 app is connected (fails while the app
+    /// holds it), and start a fresh simulator for --sim.
+    #[arg(long, global = true)]
+    direct: bool,
 
     #[command(subcommand)]
     cmd: Cmd,
@@ -272,9 +278,84 @@ fn parse_duration(s: &str) -> Result<Duration, String> {
     Ok(Duration::from_secs_f64(value * scale))
 }
 
-fn connect(cli: &Cli) -> Result<Vh1160, String> {
+/// The box, opened here or reached through the vh1160 app.
+enum Device {
+    Local(Vh1160),
+    App(Client),
+}
+
+impl Device {
+    fn call(&mut self, req: Request) -> Result<Reply, String> {
+        let reply = match self {
+            Device::Local(vh) => req.execute(vh).map_err(|e| e.to_string())?,
+            Device::App(c) => c.call(&req).map_err(|e| format!("vh1160 app: {e}"))?,
+        };
+        match reply {
+            Reply::Error(e) => Err(e),
+            Reply::NotConnected => Err("the vh1160 app is no longer connected to the box".into()),
+            r => Ok(r),
+        }
+    }
+
+    fn run(&mut self, req: Request) -> Result<(), String> {
+        match self.call(req)? {
+            Reply::Done => Ok(()),
+            r => Err(unexpected(r)),
+        }
+    }
+
+    fn measure(&mut self) -> Result<Measurement, String> {
+        match self.call(Request::Measure)? {
+            Reply::Measurement(m) => Ok(m),
+            r => Err(unexpected(r)),
+        }
+    }
+
+    fn pair(&mut self, req: Request) -> Result<(f64, f64), String> {
+        match self.call(req)? {
+            Reply::Pair(a, b) => Ok((a, b)),
+            r => Err(unexpected(r)),
+        }
+    }
+}
+
+fn unexpected(r: Reply) -> String {
+    format!("unexpected reply {r:?}")
+}
+
+/// What the running vh1160 app is connected to, if it runs and is connected.
+fn app_peer() -> Option<(Client, Peer)> {
+    let mut c = Client::connect().ok()?;
+    match c.call(&Request::Hello).ok()? {
+        Reply::Hello(Some(peer)) => Some((c, peer)),
+        _ => None,
+    }
+}
+
+/// The app is used when it is connected to what this call asks for: the given
+/// port, the simulator for --sim, or any real box if neither is given.
+fn via_app(cli: &Cli) -> Option<Client> {
+    if cli.direct {
+        return None;
+    }
+    let (c, peer) = app_peer()?;
+    let wanted = match (&cli.port, cli.sim) {
+        (_, true) => peer.port.is_none(),
+        (Some(p), false) => peer
+            .port
+            .as_deref()
+            .is_some_and(|q| q.eq_ignore_ascii_case(p)),
+        (None, false) => peer.port.is_some(),
+    };
+    wanted.then_some(c)
+}
+
+fn connect(cli: &Cli) -> Result<Device, String> {
+    if let Some(c) = via_app(cli) {
+        return Ok(Device::App(c));
+    }
     if cli.sim {
-        return Ok(Vh1160::simulated().0);
+        return Ok(Device::Local(Vh1160::simulated().0));
     }
     let port = match &cli.port {
         Some(p) => p.clone(),
@@ -293,7 +374,9 @@ fn connect(cli: &Cli) -> Result<Vh1160, String> {
             }
         }
     };
-    Vh1160::open(&port).map_err(|e| format!("{port}: {e}"))
+    Vh1160::open(&port)
+        .map(Device::Local)
+        .map_err(|e| format!("{port}: {e}"))
 }
 
 fn escape(bytes: &[u8]) -> String {
@@ -312,13 +395,20 @@ fn run(cli: Cli) -> Result<(), String> {
             return Ok(());
         }
         let devices = find_devices().map_err(|e| e.to_string())?;
+        let app = app_peer().and_then(|(_, peer)| Some((peer.port?, peer.version)));
         for p in ports {
             let found = devices
                 .iter()
                 .find(|(name, _)| *name == p.name)
-                .map(|(_, v)| {
+                .map(|(_, v)| (*v, ""))
+                .or_else(|| {
+                    app.as_ref()
+                        .filter(|(name, _)| name.eq_ignore_ascii_case(&p.name))
+                        .map(|(_, v)| (*v, "  (in use by the vh1160 app)"))
+                })
+                .map(|(v, note)| {
                     format!(
-                        "  <- VH1160  FW {}.{}  HW rev {}",
+                        "  <- VH1160  FW {}.{}  HW rev {}{note}",
                         v.firmware.0, v.firmware.1, v.hw_revision
                     )
                 })
@@ -334,17 +424,18 @@ fn run(cli: Cli) -> Result<(), String> {
         return Ok(());
     }
 
-    let mut vh = connect(&cli)?;
-    let e = |e: vh1160_core::Error| e.to_string();
+    let mut dev = connect(&cli)?;
 
     match cli.cmd {
         Cmd::Ports => unreachable!(),
         Cmd::Info => {
-            let v = vh.version();
-            let st = vh.state().map_err(e)?;
+            let (v, st) = match dev.call(Request::Info)? {
+                Reply::Info { version, state } => (version, state),
+                r => return Err(unexpected(r)),
+            };
             let features: Vec<_> = Feature::ALL
                 .iter()
-                .filter(|f| vh.has(**f))
+                .filter(|f| v.hw_revision >= f.min_revision())
                 .map(|f| f.name())
                 .collect();
             println!("firmware     {}.{}", v.firmware.0, v.firmware.1);
@@ -362,9 +453,12 @@ fn run(cli: Cli) -> Result<(), String> {
                     features.join(", ")
                 }
             );
+            if matches!(dev, Device::App(_)) {
+                println!("via          vh1160 app");
+            }
         }
         Cmd::Read { json } => {
-            let m = vh.measure().map_err(e)?;
+            let m = dev.measure()?;
             if json {
                 println!("{}", serde_json::to_string(&m).unwrap());
             } else {
@@ -400,7 +494,7 @@ fn run(cli: Cli) -> Result<(), String> {
             let mut n = 0u64;
             while count.is_none_or(|c| n < c) {
                 let next = start + interval * (n as u32 + 1);
-                let m = vh.measure().map_err(e)?;
+                let m = dev.measure()?;
                 let t = start.elapsed().as_secs_f64();
                 println!(
                     "{t:>7.2}s  {:>7.2}  {:>7.2}  {:>10.1}",
@@ -425,25 +519,28 @@ fn run(cli: Cli) -> Result<(), String> {
                 }
             }
         }
-        Cmd::Vbatt { volts } => vh.set_vbatt(volts, None).map_err(e)?,
+        Cmd::Vbatt { volts } => dev.run(Request::Vbatt(volts))?,
         Cmd::Relay { terminal, state } => {
             let t = match terminal {
                 TerminalArg::Kl30 => Terminal::Kl30,
                 TerminalArg::Kl15 => Terminal::Kl15,
                 TerminalArg::Kl31 => Terminal::Kl31,
             };
-            vh.set_relay(t, state == OnOff::On, Vh1160::RELAY_SETTLE)
-                .map_err(e)?;
+            dev.run(Request::Relay(t, state == OnOff::On))?;
         }
-        Cmd::On { volts } => vh.power_on(volts).map_err(e)?,
-        Cmd::Off => vh.power_off().map_err(e)?,
-        Cmd::Reset { off } => vh.reset_ecu(off).map_err(e)?,
-        Cmd::Safe => vh.safe_state().map_err(e)?,
-        Cmd::ResetOverload => vh.reset_overload().map_err(e)?,
+        Cmd::On { volts } => dev.run(Request::PowerOn(volts))?,
+        Cmd::Off => dev.run(Request::PowerOff)?,
+        Cmd::Reset { off } => dev.run(Request::ResetEcu(off))?,
+        Cmd::Safe => dev.run(Request::Safe)?,
+        Cmd::ResetOverload => dev.run(Request::ResetOverload)?,
         Cmd::Fault {
             sub: Some(FaultCmd::Clear),
             ..
-        } => vh.clear_bus_faults().map_err(e)?,
+        } => dev.run(Request::BusFaults(
+            LineInterrupt::None,
+            LineShort::None,
+            LineShort::None,
+        ))?,
         Cmd::Fault {
             sub: Some(FaultCmd::Periodic { mode, hz }),
             ..
@@ -453,7 +550,7 @@ fn run(cli: Cli) -> Result<(), String> {
                 PeriodicArg::Gnd => LinPeriodicFault::ToGnd,
                 PeriodicArg::Vbatt => LinPeriodicFault::ToVbatt,
             };
-            vh.set_periodic_lin_fault(mode, hz).map_err(e)?;
+            dev.run(Request::PeriodicLinFault(mode, hz))?;
         }
         Cmd::Fault { sub: None, set } => {
             if set.interrupt.is_none() && set.short_h.is_none() && set.short_l.is_none() {
@@ -478,46 +575,45 @@ fn run(cli: Cli) -> Result<(), String> {
                 ShortLArg::Gnd => LineShort::Gnd,
                 ShortLArg::Vbatt => LineShort::Vbatt,
             };
-            vh.set_bus_faults(interrupt, h, l).map_err(e)?;
+            dev.run(Request::BusFaults(interrupt, h, l))?;
         }
-        Cmd::Lin { sub } => match sub {
-            LinCmd::GroundOffset { volts } => vh.set_ground_offset(volts).map_err(e)?,
-            LinCmd::TesterOffset { volts } => vh.set_tester_ground_offset(volts).map_err(e)?,
-            LinCmd::RecessiveLimit { volts } => vh.set_lin_recessive_limit(volts).map_err(e)?,
-            LinCmd::Cab { mode } => vh
-                .set_lin_cab_supply(match mode {
-                    CabArg::Internal => LinCabSupply::Internal,
-                    CabArg::Auto => LinCabSupply::ExternalOrInternal,
-                    CabArg::External => LinCabSupply::External,
-                    CabArg::Mode3 => LinCabSupply::Mode3,
-                })
-                .map_err(e)?,
-        },
+        Cmd::Lin { sub } => dev.run(match sub {
+            LinCmd::GroundOffset { volts } => Request::GroundOffset(volts),
+            LinCmd::TesterOffset { volts } => Request::TesterGroundOffset(volts),
+            LinCmd::RecessiveLimit { volts } => Request::LinRecessiveLimit(volts),
+            LinCmd::Cab { mode } => Request::LinCabSupply(match mode {
+                CabArg::Internal => LinCabSupply::Internal,
+                CabArg::Auto => LinCabSupply::ExternalOrInternal,
+                CabArg::External => LinCabSupply::External,
+                CabArg::Mode3 => LinCabSupply::Mode3,
+            }),
+        })?,
         Cmd::Can { sub } => match sub {
             CanCmd::Termination => {
                 eprintln!("note: the box goes to its safe state; the ECU loses power");
-                let (pos, neg) = vh.measure_can_termination().map_err(e)?;
+                let (pos, neg) = dev.pair(Request::CanTermination)?;
                 println!("{pos:.1} ohm (+)   {neg:.1} ohm (-)");
             }
             CanCmd::Diff { period } => {
-                let (rec, dom) = vh.measure_can_diff_voltage(period).map_err(e)?;
+                let (rec, dom) = dev.pair(Request::CanDiffVoltage(period))?;
                 println!("recessive  {rec:.3} V");
                 println!("dominant   {dom:.3} V");
             }
-            CanCmd::Caps { state } => vh.set_can_capacitors(state == OnOff::On).map_err(e)?,
-            CanCmd::Cross { state } => vh.set_can_lines_crossed(state == OnOff::On).map_err(e)?,
+            CanCmd::Caps { state } => dev.run(Request::CanCapacitors(state == OnOff::On))?,
+            CanCmd::Cross { state } => dev.run(Request::CanLinesCrossed(state == OnOff::On))?,
         },
-        Cmd::Io { sub } => match sub {
-            IoCmd::Aout { volts } => vh.set_analog_output(volts).map_err(e)?,
-            IoCmd::Dout { level } => vh
-                .set_digital_output(matches!(level, Level::High))
-                .map_err(e)?,
-            IoCmd::Range { range } => vh
-                .set_current_range(matches!(range, RangeArg::Auto))
-                .map_err(e)?,
-        },
+        Cmd::Io { sub } => dev.run(match sub {
+            IoCmd::Aout { volts } => Request::AnalogOutput(volts),
+            IoCmd::Dout { level } => Request::DigitalOutput(matches!(level, Level::High)),
+            IoCmd::Range { range } => Request::CurrentRange {
+                auto: matches!(range, RangeArg::Auto),
+            },
+        })?,
         Cmd::Raw { command, reply_len } => {
-            let reply = vh.raw(&command, reply_len).map_err(e)?;
+            let reply = match dev.call(Request::Raw { command, reply_len })? {
+                Reply::Raw(reply) => reply,
+                r => return Err(unexpected(r)),
+            };
             if reply_len > 0 {
                 println!("{}", escape(&reply));
             }

@@ -24,14 +24,14 @@
 //!
 //! Every command and every reply ends in `\r`.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
 
 pub const CR: u8 = b'\r';
 
 /// Supply terminals.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Terminal {
     /// VBatt.
     Kl30,
@@ -54,7 +54,7 @@ impl Terminal {
 }
 
 /// Which bus lines are cut between tester and ECU. CAN_H is also the LIN line.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum LineInterrupt {
     #[default]
     None,
@@ -64,7 +64,7 @@ pub enum LineInterrupt {
 }
 
 /// What a bus line is shorted to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum LineShort {
     #[default]
     None,
@@ -74,7 +74,7 @@ pub enum LineShort {
     CanL,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum LinPeriodicFault {
     #[default]
     Off,
@@ -83,7 +83,7 @@ pub enum LinPeriodicFault {
 }
 
 /// Supply of a LINcab plugged into the Y-cable.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum LinCabSupply {
     /// The LINcab makes its own 12 V.
     #[default]
@@ -97,7 +97,7 @@ pub enum LinCabSupply {
 }
 
 /// Firmware and hardware revision from the `t` handshake.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Version {
     pub firmware: (u32, u32),
     /// Decides which features the box has, see [`Feature`].
@@ -105,7 +105,7 @@ pub struct Version {
 }
 
 /// One `w` reading.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Measurement {
     pub kl30: f64,
     pub kl15: f64,
@@ -125,7 +125,7 @@ impl Measurement {
 }
 
 /// One `s` reading.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeviceState {
     pub overload: bool,
     /// Raw bytes; their meaning is not documented.

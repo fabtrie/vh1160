@@ -3,11 +3,16 @@
 //! Serial I/O blocks (replies take milliseconds, a CAN measurement takes a
 //! second), so it never runs on the UI thread. Commands arrive over a std
 //! channel; readings and results go back over an async channel the UI awaits.
+//!
+//! The thread also answers [`Request`]s from other processes (the CLI) that
+//! arrive over [`vh1160_core::remote`], so they can use the box while the app
+//! has the port open.
 
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::time::{Duration, Instant};
 
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
+use vh1160_core::remote::{self, Peer, Reply, Request};
 use vh1160_core::{
     DeviceState, LinCabSupply, LinPeriodicFault, LineInterrupt, LineShort, Measurement, SimHandle,
     Terminal, Version, Vh1160,
@@ -44,13 +49,17 @@ pub enum Cmd {
     Cab(LinCabSupply),
     AnalogOut(f64),
     DigitalOut(bool),
-    CurrentRange { auto: bool },
+    CurrentRange {
+        auto: bool,
+    },
     Capacitors(bool),
     CrossLines(bool),
     Termination,
     Diff(Duration),
     SimLoad(f64),
     SimOverload,
+    /// From another process; the reply goes back on the sender.
+    Remote(Request, mpsc::Sender<Reply>),
 }
 
 #[derive(Debug)]
@@ -72,6 +81,8 @@ pub enum Event {
     Diff(f64, f64),
     /// A command failed; the connection is still up.
     Error(String),
+    /// Another process changed the box; the UI mirrors it.
+    Remote(Request),
 }
 
 pub struct Worker {
@@ -86,6 +97,16 @@ impl Worker {
             .name("vh1160-device".into())
             .spawn(move || run(rx, etx))
             .expect("spawn device thread");
+        let remote_tx = tx.clone();
+        // Fails when another instance already serves; that one keeps doing so.
+        let _ = remote::serve(remote::SOCKET, move |req| {
+            let (rtx, rrx) = mpsc::channel();
+            if remote_tx.send(Cmd::Remote(req, rtx)).is_err() {
+                return Reply::Error("the app is closing".into());
+            }
+            rrx.recv()
+                .unwrap_or_else(|_| Reply::Error("the app is closing".into()))
+        });
         (Self { tx }, erx)
     }
 
@@ -97,6 +118,8 @@ impl Worker {
 struct Conn {
     vh: Vh1160,
     sim: Option<SimHandle>,
+    /// `None` for the simulator.
+    port: Option<String>,
 }
 
 fn run(rx: mpsc::Receiver<Cmd>, tx: UnboundedSender<Event>) {
@@ -138,7 +161,11 @@ fn run(rx: mpsc::Receiver<Cmd>, tx: UnboundedSender<Event>) {
                             label,
                             sim: sim.is_some(),
                         });
-                        conn = Some(Conn { vh, sim });
+                        let port = match target {
+                            Target::Port(p) => Some(p),
+                            Target::Sim => None,
+                        };
+                        conn = Some(Conn { vh, sim, port });
                         next_poll = Instant::now();
                         polls = 0;
                         failures = 0;
@@ -149,6 +176,9 @@ fn run(rx: mpsc::Receiver<Cmd>, tx: UnboundedSender<Event>) {
             Ok(Cmd::Disconnect) => {
                 conn = None;
                 emit(Event::Disconnected { error: None });
+            }
+            Ok(Cmd::Remote(req, reply)) => {
+                let _ = reply.send(remote_request(conn.as_mut(), req, &emit));
             }
             Ok(cmd) => {
                 let Some(c) = conn.as_mut() else { continue };
@@ -196,10 +226,37 @@ fn run(rx: mpsc::Receiver<Cmd>, tx: UnboundedSender<Event>) {
     }
 }
 
+fn remote_request(conn: Option<&mut Conn>, req: Request, emit: &impl Fn(Event)) -> Reply {
+    let Some(c) = conn else {
+        return match req {
+            Request::Hello => Reply::Hello(None),
+            _ => Reply::NotConnected,
+        };
+    };
+    if req == Request::Hello {
+        return Reply::Hello(Some(Peer {
+            port: c.port.clone(),
+            version: c.vh.version(),
+        }));
+    }
+    match req.execute(&mut c.vh) {
+        Ok(reply) => {
+            match (&req, &reply) {
+                (Request::CanTermination, Reply::Pair(p, n)) => emit(Event::Termination(*p, *n)),
+                (Request::CanDiffVoltage(_), Reply::Pair(r, d)) => emit(Event::Diff(*r, *d)),
+                (Request::Measure | Request::State | Request::Info | Request::Raw { .. }, _) => {}
+                _ => emit(Event::Remote(req)),
+            }
+            reply
+        }
+        Err(e) => Reply::Error(e.to_string()),
+    }
+}
+
 fn execute(c: &mut Conn, cmd: Cmd, emit: &impl Fn(Event)) -> vh1160_core::Result<()> {
     let vh = &mut c.vh;
     match cmd {
-        Cmd::Connect(_) | Cmd::Disconnect => unreachable!(),
+        Cmd::Connect(_) | Cmd::Disconnect | Cmd::Remote(..) => unreachable!(),
         Cmd::Vbatt(v) => vh.set_vbatt(v, None)?,
         Cmd::Relay(t, on) => vh.set_relay(t, on, Vh1160::RELAY_SETTLE)?,
         Cmd::PowerOn(v) => vh.power_on(Some(v))?,

@@ -14,6 +14,7 @@
 pub mod device;
 pub mod error;
 pub mod protocol;
+pub mod remote;
 pub mod sim;
 pub mod transport;
 

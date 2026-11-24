@@ -23,7 +23,19 @@ cargo run -p vh1160-cli -- info
 ```
 
 Other commands: `read [--json]`, `monitor [--interval 250ms] [--csv out.csv]`, `vbatt 13.5`, `relay 30 on`, `on [13.5]`, `off`, `reset [--off 1s]`, `safe`, `reset-overload`, `fault --interrupt h --short-l gnd`, `fault clear`, `fault periodic gnd --hz 1000`, `lin ground-offset 2.0`, `lin cab internal`, `can termination`, `can diff`, `can caps on`, `io aout 5.0`, `io dout high`, `raw t 6`.
-`--port COM7` picks a port (otherwise it's auto-detected by sending the version request to every FTDI port) and `--sim` uses the simulator. Each `--sim` call starts a fresh simulator.
+`--port COM7` picks a port (otherwise it's auto-detected by sending the version request to every FTDI port) and `--sim` uses the simulator.
+
+### Using the CLI while the app is open
+
+Windows lets only one process open a COM port, so while the desktop app is connected the CLI sends its commands to the app instead. The app runs them between its own readings, and its switches follow what the CLI changed. This happens on its own:
+
+- With no `--port` and no `--sim`, the CLI uses the app if the app is connected to a box.
+- With `--port COM7`, it uses the app if the app is connected to COM7.
+- With `--sim`, it uses the app's simulator if the app runs one. Otherwise every `--sim` call starts a fresh simulator.
+
+If the app is closed or disconnected, the CLI opens the port itself. `--direct` always opens the port itself (and gives a fresh simulator with `--sim`). `info` prints `via vh1160 app` when it went through the app, and `ports` marks the app's port as in use.
+
+The app listens on the named pipe `\\.\pipe\vh1160`, which accepts only local clients and, with Windows' default pipe permissions, only the same user (or an administrator) can send commands. Requests are one JSON line each; see `crates/vh1160-core/src/remote.rs`. Only the first app instance serves the pipe.
 
 ## Desktop app
 
